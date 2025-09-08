@@ -48,7 +48,20 @@
     .namecell{padding:8px 10px;white-space:nowrap}
 
     /* Bar styles */
-    .bar{position:absolute;top:4px;bottom:4px;border-radius:7px;display:flex;align-items:center;justify-content:center;padding:0 8px;color:#0b1022;font-weight:700;overflow:hidden;cursor:default}
+    .bar{
+      position:relative;
+      height:24px;
+      margin:4px 2px;
+      border-radius:7px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:0 8px;
+      color:#0b1022;
+      font-weight:700;
+      overflow:hidden;
+      cursor:default;
+    }
     .bar.pending::after{content:"";position:absolute;inset:0;background-image:repeating-linear-gradient(135deg, rgba(255,255,255,.65) 0 8px, rgba(255,255,255,0) 8px 16px)}
     .bar .label{position:relative;z-index:1;text-shadow:0 1px 0 #ffffff55}
 
@@ -308,6 +321,7 @@
 
   async function render(){
     updateMonthLabel();
+  
     // Load and parse data
     let vacs = [];
     try{
@@ -318,23 +332,27 @@
       grid.innerHTML = `<div style="padding:16px">⚠️ ${err.message}. Make sure your sheet is published to the web and the SHEET_CSV_URL is correct.</div>`;
       return;
     }
-
-    // Layout columns: 1 name column + one column per day
+  
+    // Layout: 1 name column + one column per day
     const days = daysArray(currentMonth);
     grid.style.gridTemplateColumns = `200px repeat(${days.length}, 1fr)`;
-
-    // Build header row (two stacked lines: weekday letter + day number)
+  
+    // Build header row (weekday letter + day number)
     const headParts = [];
     headParts.push(`<div class="head name-cell headcell" style="grid-column:1">Employee</div>`);
     days.forEach((d, i)=>{
       const dow = d.toLocaleDateString(undefined,{weekday:'narrow'}); // M T W …
-      headParts.push(`<div class="head cell headcell" style="grid-column:${i+2}"><div class="dow">${dow}</div><div class="daynum">${d.getDate()}</div></div>`);
+      headParts.push(
+        `<div class="head cell headcell" style="grid-column:${i+2}">
+           <div class="dow">${dow}</div>
+           <div class="daynum">${d.getDate()}</div>
+         </div>`);
     });
-
+  
     // Rows per employee
     const byEmp = groupByEmployee(vacs);
     const employees = findUniqueEmployees(vacs);
-
+  
     const rowParts = [];
     for(const emp of employees){
       // Left sticky name cell
@@ -344,63 +362,53 @@
         rowParts.push(`<div class="row cell"></div>`);
       }
     }
-
+  
     grid.innerHTML = headParts.join('') + rowParts.join('');
-
-    // Render bars spanning correct columns
-    // We'll append absolutely-positioned bars inside their starting day cell and stretch via width calculation
-    const nameCells = grid.querySelectorAll('.namecell');
+  
+    // Render bars using CSS grid placement (no pixel math)
     employees.forEach((emp, rowIdx)=>{
       const empColor = nameToColor(emp);
       const items = (byEmp.get(emp)||[]);
       for(const v of items){
         const overlap = monthOverlap(v.start, v.end, currentMonth);
         if(!overlap) continue;
+  
         const startCol = overlap.start.getDate();
-        const endCol = overlap.end.getDate();
-        const colStartIndex = 2 + (startCol - 1); // grid column index where the bar begins
-        const colEndIndex = 2 + (endCol - 1);
-        const rowStart = 1 + (rowIdx + 1); // +1 to jump past header row (display:contents)
-
-        // Find the starting cell element (row, col)
-        const cellIndex = // header has 1 name + N days. Then for each row: 1 name + N days
-          (1 /*header name*/ + days.length /*header days*/)
-          + rowIdx * (1 + days.length)
-          + 1 /*row name cell*/
-          + (startCol - 1);
-        const startCell = grid.children[cellIndex];
-        if(!startCell) continue;
-
+        const endCol   = overlap.end.getDate();
+  
+        // grid column lines: start at first day col = 2, end line is exclusive
+        const colStartIndex = 2 + (startCol - 1);
+        const colEndLine    = 2 + endCol; // +1 from the end cell’s column
+  
+        // grid row lines: header occupies row 1; first employee row starts at row 2
+        const rowStartLine  = 2 + rowIdx;
+        const rowEndLine    = rowStartLine + 1;
+  
         const bar = document.createElement('div');
         bar.className = 'bar' + (v.status === 'Pending' ? ' pending' : '');
         bar.style.background = empColor;
-        // Compute pixel width spanning from start to end cells
-        // We'll stretch across adjacent day cells by summing widths after first layout.
-        requestAnimationFrame(()=>{
-          const rectStart = startCell.getBoundingClientRect();
-          const endCellIndex = cellIndex + (endCol - startCol);
-          const endCell = grid.children[endCellIndex];
-          const rectEnd = endCell.getBoundingClientRect();
-          const parentRect = startCell.parentElement.getBoundingClientRect();
-          const left = rectStart.left - parentRect.left + 2; // small inset
-          const right = rectEnd.right - parentRect.left - 2;
-          bar.style.left = left + 'px';
-          bar.style.width = Math.max(8, right - left) + 'px';
-        });
+  
+        // Place bar across columns and in the correct row
+        bar.style.gridColumn = `${colStartIndex} / ${colEndLine}`;
+        bar.style.gridRow    = `${rowStartLine} / ${rowEndLine}`;
+  
+        // Tooltip with exact dates and status
+        bar.title = `${emp} — ${overlap.start.toLocaleDateString()} to ${overlap.end.toLocaleDateString()} (${v.status})`;
+  
+        // Center label
         const label = document.createElement('span');
         label.className = 'label';
         label.textContent = emp;
         bar.appendChild(label);
-
-        // Context menu behavior
+  
+        // Right-click behavior (roles)
         bar.addEventListener('contextmenu', (e)=>{
           e.preventDefault(); hideCtx();
           if(canOpenApprovalFor(emp)){
             showCtx(e.clientX, e.clientY, emp, v);
           }
         });
-
-        // Append into the row container (use the grid wrapper as positioned ancestor)
+  
         grid.appendChild(bar);
       }
     });
