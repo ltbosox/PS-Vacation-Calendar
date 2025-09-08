@@ -112,13 +112,14 @@
    * 1) EDIT THESE
    *********************/
   // Link to your Google Form for creating requests
-  const FORM_URL = "https://docs.google.com/forms/d/FORM_ID/viewform";
+  const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeYlyGc4FXwIL2FwtAnEyJrCOlVN67uTYMiuSIQJSe4mEAh1g/viewform?usp=sharing&ouid=102321165535070845688";
   // Link to your Google Sheets approvals spreadsheet (opens when approver right-clicks)
-  const APPROVAL_SHEET_URL = "https://docs.google.com/spreadsheets/d/SHEET_ID/edit";
-  // PUBLIC CSV export link for the responses sheet. How to get this is explained in the instructions.
-  // Columns expected: Name, Start Date, End Date, Status
-  // Dates should be YYYY-MM-DD (recommended) or a recognizable format like 8/31/2025
-  const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/SHEET_ID/export?format=csv&gid=0";
+  const APPROVAL_SHEET_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdgpcs0DWosivGb4h5wbCksgeRO8YLFQboz0NO0-krTIZQY7w/viewform?usp=sharing&ouid=102321165535070845688";
+  // PUBLIC CSV export link for the responses sheet (Publish to web → CSV on the specific tab)
+  // Your sheet has these columns: Timestamp, Employee Name, Employee Email, Manager Name, Manager Email,
+  // Department, Start Date, Return Date, Hours Taken, Type of Time Off, Notes, Request #, Overall Status
+  // We will use: Employee Name, Start Date, Return Date (we treat last day off = Return Date minus 1 day), Overall Status
+  const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1y2d5xHbDbg-iy8m6XJIqkRdUEr2gYLEDQdA6lMDX4mg/export?format=csv&gid=0";
 
   // Optional: list approvers by employee name for role filtering logic on right-click
   const APPROVER1_NAMES = [ /* e.g., "Avery Jones" */ ];
@@ -177,23 +178,60 @@
     return text;
   }
   function parseCSV(text){
-    // Simple CSV splitter; good enough for standard Google export without embedded commas/newlines
-    const rows = text.trim().split(/\r?\n/).map(r=>r.split(","));
-    const header = rows.shift().map(s=>s.trim());
+    // Parse CSV with basic quote handling (works with Google export)
+    function csvToRows(t){
+      const rows=[]; let row=[]; let cur=''; let q=false;
+      for(let i=0;i<t.length;i++){
+        const c=t[i], n=t[i+1];
+        if(c === '"'){
+          if(q && n === '"'){ cur += '"'; i++; } else { q = !q; }
+        } else if(c === ',' && !q){
+          row.push(cur); cur = '';
+        } else if((c === '\n' || c === '\r') && !q){
+          if(c === '\r' && n === '\n'){ i++; }
+          row.push(cur); rows.push(row); row=[]; cur='';
+        } else {
+          cur += c;
+        }
+      }
+      if(cur.length > 0 || row.length > 0){ row.push(cur); rows.push(row); }
+      return rows.filter(r => r.length && r.some(x => String(x).trim() !== ''));
+    }
+  
+    const rows = csvToRows(text);
+    const header = rows.shift().map(s => String(s).trim());
+    const find = (re) => header.findIndex(h => re.test(h));
+  
     const idx = {
-      name: header.findIndex(h=>/^name$/i.test(h)),
-      start: header.findIndex(h=>/^start\s*date$/i.test(h)),
-      end:   header.findIndex(h=>/^end\s*date$/i.test(h)),
-      status:header.findIndex(h=>/^status$/i.test(h))
+      name:   find(/^employee\s*name$/i),
+      start:  find(/^start\s*date$/i),
+      // If an explicit End Date exists we'll use it; your sheet uses Return Date (first day back).
+      end:    find(/^end\s*date$/i),
+      ret:    find(/^return\s*date$/i),
+      status: find(/^(overall\s*status|status)$/i)
     };
+  
     const out = [];
     for(const r of rows){
-      const nm = (r[idx.name]||"").trim();
-      const sd = parseDateLoose((r[idx.start]||"").trim());
-      const ed = parseDateLoose((r[idx.end]||"").trim());
-      const st = ((r[idx.status]||"").trim()) || "Pending";
+      const nm = (r[idx.name]  ?? '').trim();
+      const sd = parseDateLoose((r[idx.start] ?? '').trim());
+  
+      let ed = null;
+      if(idx.end !== -1){
+        ed = parseDateLoose((r[idx.end] ?? '').trim());
+      } else if(idx.ret !== -1){
+        const ret = parseDateLoose((r[idx.ret] ?? '').trim());
+        if(ret){
+          // Return Date = first day back → last day off is Return Date - 1
+          ed = new Date(ret.getFullYear(), ret.getMonth(), ret.getDate() - 1);
+        }
+      }
+  
+      const rawStatus = (r[idx.status] ?? '').trim();
+      const st = /approved|complete/i.test(rawStatus) ? 'Approved' : 'Pending';
+  
       if(!nm || !sd || !ed) continue;
-      out.push({name:nm,start:clampDate(sd),end:clampDate(ed),status:st});
+      out.push({ name: nm, start: clampDate(sd), end: clampDate(ed), status: st });
     }
     return out;
   }
@@ -334,7 +372,7 @@
         if(!startCell) continue;
 
         const bar = document.createElement('div');
-        bar.className = 'bar' + (String(v.status).toLowerCase().startsWith('pend') ? ' pending' : '');
+        bar.className = 'bar' + (v.status === 'Pending' ? ' pending' : '');
         bar.style.background = empColor;
         // Compute pixel width spanning from start to end cells
         // We'll stretch across adjacent day cells by summing widths after first layout.
