@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Team Vacation Calendar</title>
+  <meta name="description" content="Simple HTML/JS vacation calendar that reads Google Sheets data and shows requests by employee as colored bars." />
+  <style>
+    :root{
+      --bg:#0f1220; --panel:#151a2b; --ink:#eaf0ff; --muted:#9aa5c1; --line:#28314d;
+      --accent:#6ea8ff; --red:#ff6e6e; --green:#5fd19a; --shadow:0 10px 30px rgba(0,0,0,.45);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 ui-sans-serif,system-ui,Segoe UI,Roboto,Arial,sans-serif}
+    a{color:inherit}
+    .app{max-width:1200px;margin:0 auto;padding:18px}
+    header{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:14px}
+    .title{display:flex;align-items:center;gap:10px}
+    .title h1{font-size:18px;margin:0}
+    .controls{display:flex;align-items:center;gap:8px}
+    .btn{background:var(--panel);border:1px solid var(--line);padding:6px 10px;border-radius:10px;color:var(--ink);cursor:pointer}
+    .btn:hover{border-color:#3a4671}
+    .nav{display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);padding:6px 8px;border-radius:12px}
+    .nav button{all:unset;cursor:pointer;padding:4px 8px;border-radius:8px}
+    .nav button:hover{background:#1d2745}
+    .month-label{min-width:180px;text-align:center;font-weight:600}
+
+    /* Floating + button */
+    .fab{position:fixed;right:22px;bottom:22px;display:flex;align-items:center;gap:10px;background:var(--accent);color:#0b1022;border:none;border-radius:18px;padding:12px 14px;font-weight:700;cursor:pointer;box-shadow:var(--shadow)}
+    .fab svg{width:22px;height:22px}
+
+    .legend{display:flex;gap:14px;align-items:center;color:var(--muted);margin:8px 0 16px}
+    .chip{display:inline-flex;align-items:center;gap:8px}
+    .chip .swatch{width:18px;height:12px;border-radius:3px;border:1px solid #0004;box-shadow:inset 0 0 0 1px #fff2}
+    .chip .pending{background-image:repeating-linear-gradient(135deg, #ffffff90 0 6px, #ffffff10 6px 12px)}
+
+    /* Calendar grid */
+    .calendar{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:auto}
+    .grid{display:grid}
+    .grid .head, .grid .row{display:contents}
+    .name-cell{position:sticky;left:0;background:linear-gradient(90deg,var(--panel),#151a2b);z-index:2;border-right:1px solid var(--line)}
+
+    .cell{border-top:1px solid var(--line);border-right:1px solid var(--line);min-height:34px;position:relative}
+    .dow{font-size:11px;color:var(--muted)}
+    .daynum{font-size:12px;color:var(--ink);font-weight:600}
+    .headcell{padding:6px 6px;text-align:center}
+    .namecell{padding:8px 10px;white-space:nowrap}
+
+    /* Bar styles */
+    .bar{position:absolute;top:4px;bottom:4px;border-radius:7px;display:flex;align-items:center;justify-content:center;padding:0 8px;color:#0b1022;font-weight:700;overflow:hidden;cursor:default}
+    .bar.pending::after{content:"";position:absolute;inset:0;background-image:repeating-linear-gradient(135deg, rgba(255,255,255,.65) 0 8px, rgba(255,255,255,0) 8px 16px)}
+    .bar .label{position:relative;z-index:1;text-shadow:0 1px 0 #ffffff55}
+
+    /* Context menu */
+    .ctx{position:fixed;z-index:50;background:#0e142b;border:1px solid #32406c;border-radius:10px;min-width:220px;box-shadow:var(--shadow);display:none}
+    .ctx a{display:block;padding:10px 12px;text-decoration:none}
+    .ctx a:hover{background:#17224a}
+
+    /* Role pill */
+    .role-pill{background:#1b2444;border:1px solid #28345d;color:#b9c4e8;padding:6px 10px;border-radius:999px;font-size:12px}
+
+    /* Narrow screens */
+    @media (max-width: 900px){
+      .app{padding:12px}
+      .month-label{min-width:140px}
+      .namecell{min-width:150px}
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="title">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7 2v3M17 2v3M3.5 9h17M4 7c0-1.657 1.343-3 3-3h10c1.657 0 3 1.343 3 3v12c0 1.657-1.343 3-3 3H7c-1.657 0-3-1.343-3-3V7Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <h1>Team Vacation Calendar</h1>
+        <span id="rolePill" class="role-pill">Role: user</span>
+      </div>
+      <div class="controls">
+        <div class="nav">
+          <button id="prevBtn" title="Previous month">⟨</button>
+          <button id="todayBtn" title="Jump to today">Today</button>
+          <button id="nextBtn" title="Next month">⟩</button>
+        </div>
+        <div class="month-label" id="monthLabel">Month YYYY</div>
+        <button class="btn" id="refreshBtn" title="Reload data">↻ Refresh</button>
+      </div>
+    </header>
+
+    <div class="legend">
+      <div class="chip"><span class="swatch" style="background:#6ea8ff"></span> Approved</div>
+      <div class="chip"><span class="swatch pending" style="background:#6ea8ff"></span> Pending</div>
+      <div class="chip">Right‑click (approvers) → Open approvals sheet</div>
+    </div>
+
+    <div id="calendar" class="calendar">
+      <div id="grid" class="grid"></div>
+    </div>
+  </div>
+
+  <!-- Floating + button to Google Form (edit the URL below) -->
+  <a id="requestLink" class="fab" href="#" target="_blank" rel="noopener">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    Request time off
+  </a>
+
+  <!-- Simple context menu for approvers -->
+  <div id="ctx" class="ctx"></div>
+
+  <script>
+  /*********************
+   * 1) EDIT THESE
+   *********************/
+  // Link to your Google Form for creating requests
+  const FORM_URL = "https://docs.google.com/forms/d/FORM_ID/viewform";
+  // Link to your Google Sheets approvals spreadsheet (opens when approver right-clicks)
+  const APPROVAL_SHEET_URL = "https://docs.google.com/spreadsheets/d/SHEET_ID/edit";
+  // PUBLIC CSV export link for the responses sheet. How to get this is explained in the instructions.
+  // Columns expected: Name, Start Date, End Date, Status
+  // Dates should be YYYY-MM-DD (recommended) or a recognizable format like 8/31/2025
+  const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/SHEET_ID/export?format=csv&gid=0";
+
+  // Optional: list approvers by employee name for role filtering logic on right-click
+  const APPROVER1_NAMES = [ /* e.g., "Avery Jones" */ ];
+  const APPROVER2_NAMES = [ /* e.g., "Casey Patel" */ ];
+
+  /*********************
+   * 2) ROLE HANDLING
+   * You can pass ?role=user, ?role=approver1, or ?role=approver2 in the page URL
+   * Example: https://yourname.github.io/vacation-cal/?role=approver2
+   * If none given, defaults to 'user'.
+   *********************/
+  const urlRole = new URL(location.href).searchParams.get("role");
+  const role = (urlRole === "approver2" || urlRole === "approver1") ? urlRole : "user";
+  const rolePill = document.getElementById('rolePill');
+  rolePill.textContent = `Role: ${role}`;
+
+  // Hook up links
+  document.getElementById('requestLink').href = FORM_URL;
+
+  /*********************
+   * 3) DATA TYPES
+   *********************/
+  /** @typedef {{ name:string, start:Date, end:Date, status:"Pending"|"Approved"|string }} Vacation */
+
+  /*********************
+   * 4) UTILITIES
+   *********************/
+  function fmtMonth(date){ return date.toLocaleString(undefined,{month:'long',year:'numeric'}); }
+  function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+  function endOfMonth(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0); }
+  function daysInMonth(d){ return endOfMonth(d).getDate(); }
+  function clampDate(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function parseDateLoose(s){
+    // Try YYYY-MM-DD first
+    const iso = /^\d{4}-\d{2}-\d{2}$/;
+    if(iso.test(s)) return new Date(s+"T00:00:00");
+    // Fallback to Date.parse
+    const t = Date.parse(s);
+    if(!isNaN(t)) return new Date(t);
+    return null;
+  }
+  function nameToColor(name){
+    // Deterministic pastel-ish HSL from name hash
+    let h=0; for(let i=0;i<name.length;i++) h = (h*31 + name.charCodeAt(i))>>>0;
+    const hue = h % 360; const sat = 70; const light = 65;
+    return `hsl(${hue} ${sat}% ${light}%)`;
+  }
+
+  /*********************
+   * 5) FETCH & PARSE SHEET (CSV)
+   *********************/
+  async function fetchCSV(url){
+    const res = await fetch(url, {cache:'no-store'});
+    if(!res.ok) throw new Error(`Failed to load sheet: ${res.status}`);
+    const text = await res.text();
+    return text;
+  }
+  function parseCSV(text){
+    // Simple CSV splitter; good enough for standard Google export without embedded commas/newlines
+    const rows = text.trim().split(/\r?\n/).map(r=>r.split(","));
+    const header = rows.shift().map(s=>s.trim());
+    const idx = {
+      name: header.findIndex(h=>/^name$/i.test(h)),
+      start: header.findIndex(h=>/^start\s*date$/i.test(h)),
+      end:   header.findIndex(h=>/^end\s*date$/i.test(h)),
+      status:header.findIndex(h=>/^status$/i.test(h))
+    };
+    const out = [];
+    for(const r of rows){
+      const nm = (r[idx.name]||"").trim();
+      const sd = parseDateLoose((r[idx.start]||"").trim());
+      const ed = parseDateLoose((r[idx.end]||"").trim());
+      const st = ((r[idx.status]||"").trim()) || "Pending";
+      if(!nm || !sd || !ed) continue;
+      out.push({name:nm,start:clampDate(sd),end:clampDate(ed),status:st});
+    }
+    return out;
+  }
+
+  /*********************
+   * 6) BUILD GRID
+   *********************/
+  const grid = document.getElementById('grid');
+  let currentMonth = startOfMonth(new Date());
+  updateMonthLabel();
+
+  document.getElementById('prevBtn').onclick = ()=>{ currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth()-1, 1); render(); };
+  document.getElementById('nextBtn').onclick = ()=>{ currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth()+1, 1); render(); };
+  document.getElementById('todayBtn').onclick = ()=>{ currentMonth = startOfMonth(new Date()); render(); };
+  document.getElementById('refreshBtn').onclick = ()=> render();
+
+  function updateMonthLabel(){ document.getElementById('monthLabel').textContent = fmtMonth(currentMonth); }
+
+  function findUniqueEmployees(vacs){
+    const set = new Set(vacs.map(v=>v.name));
+    return Array.from(set).sort((a,b)=>a.localeCompare(b));
+  }
+
+  function groupByEmployee(vacs){
+    const map = new Map();
+    for(const v of vacs){
+      if(!map.has(v.name)) map.set(v.name, []);
+      map.get(v.name).push(v);
+    }
+    return map;
+  }
+
+  function daysArray(month){
+    const total = daysInMonth(month);
+    const arr = [];
+    for(let d=1; d<=total; d++) arr.push(new Date(month.getFullYear(), month.getMonth(), d));
+    return arr;
+  }
+
+  function dateInRange(d,a,b){
+    const t = +clampDate(d), ta=+clampDate(a), tb=+clampDate(b);
+    return t>=ta && t<=tb;
+  }
+
+  function monthOverlap(rangeStart, rangeEnd, monthStart){
+    const monthEnd = endOfMonth(monthStart);
+    const start = rangeStart > monthStart ? rangeStart : monthStart;
+    const end = rangeEnd < monthEnd ? rangeEnd : monthEnd;
+    if(end < start) return null;
+    return {start, end};
+  }
+
+  // Context menu permissions per role
+  function canOpenApprovalFor(employeeName){
+    if(role === 'user') return false;
+    const isA1 = APPROVER1_NAMES.includes(employeeName);
+    const isA2 = APPROVER2_NAMES.includes(employeeName);
+    if(role === 'approver1'){
+      // Approver1 can open for plain users only (not approvers)
+      return !(isA1 || isA2);
+    }
+    // approver2 can open for everyone
+    return true;
+  }
+
+  const ctx = document.getElementById('ctx');
+  function hideCtx(){ ctx.style.display='none'; }
+  function showCtx(x,y, emp, vac){
+    ctx.innerHTML = `<a href="${APPROVAL_SHEET_URL}" target="_blank" rel="noopener">Open approvals sheet for ${emp}</a>`;
+    ctx.style.left = x+"px"; ctx.style.top = y+"px"; ctx.style.display='block';
+  }
+  document.addEventListener('click', hideCtx);
+  document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') hideCtx(); });
+
+  async function render(){
+    updateMonthLabel();
+    // Load and parse data
+    let vacs = [];
+    try{
+      const csv = await fetchCSV(SHEET_CSV_URL);
+      vacs = parseCSV(csv);
+    }catch(err){
+      console.error(err);
+      grid.innerHTML = `<div style="padding:16px">⚠️ ${err.message}. Make sure your sheet is published to the web and the SHEET_CSV_URL is correct.</div>`;
+      return;
+    }
+
+    // Layout columns: 1 name column + one column per day
+    const days = daysArray(currentMonth);
+    grid.style.gridTemplateColumns = `200px repeat(${days.length}, 1fr)`;
+
+    // Build header row (two stacked lines: weekday letter + day number)
+    const headParts = [];
+    headParts.push(`<div class="head name-cell headcell" style="grid-column:1">Employee</div>`);
+    days.forEach((d, i)=>{
+      const dow = d.toLocaleDateString(undefined,{weekday:'narrow'}); // M T W …
+      headParts.push(`<div class="head cell headcell" style="grid-column:${i+2}"><div class="dow">${dow}</div><div class="daynum">${d.getDate()}</div></div>`);
+    });
+
+    // Rows per employee
+    const byEmp = groupByEmployee(vacs);
+    const employees = findUniqueEmployees(vacs);
+
+    const rowParts = [];
+    for(const emp of employees){
+      // Left sticky name cell
+      rowParts.push(`<div class="row name-cell namecell">${emp}</div>`);
+      // Day cells
+      for(let i=0;i<days.length;i++){
+        rowParts.push(`<div class="row cell"></div>`);
+      }
+    }
+
+    grid.innerHTML = headParts.join('') + rowParts.join('');
+
+    // Render bars spanning correct columns
+    // We'll append absolutely-positioned bars inside their starting day cell and stretch via width calculation
+    const nameCells = grid.querySelectorAll('.namecell');
+    employees.forEach((emp, rowIdx)=>{
+      const empColor = nameToColor(emp);
+      const items = (byEmp.get(emp)||[]);
+      for(const v of items){
+        const overlap = monthOverlap(v.start, v.end, currentMonth);
+        if(!overlap) continue;
+        const startCol = overlap.start.getDate();
+        const endCol = overlap.end.getDate();
+        const colStartIndex = 2 + (startCol - 1); // grid column index where the bar begins
+        const colEndIndex = 2 + (endCol - 1);
+        const rowStart = 1 + (rowIdx + 1); // +1 to jump past header row (display:contents)
+
+        // Find the starting cell element (row, col)
+        const cellIndex = // header has 1 name + N days. Then for each row: 1 name + N days
+          (1 /*header name*/ + days.length /*header days*/)
+          + rowIdx * (1 + days.length)
+          + 1 /*row name cell*/
+          + (startCol - 1);
+        const startCell = grid.children[cellIndex];
+        if(!startCell) continue;
+
+        const bar = document.createElement('div');
+        bar.className = 'bar' + (String(v.status).toLowerCase().startsWith('pend') ? ' pending' : '');
+        bar.style.background = empColor;
+        // Compute pixel width spanning from start to end cells
+        // We'll stretch across adjacent day cells by summing widths after first layout.
+        requestAnimationFrame(()=>{
+          const rectStart = startCell.getBoundingClientRect();
+          const endCellIndex = cellIndex + (endCol - startCol);
+          const endCell = grid.children[endCellIndex];
+          const rectEnd = endCell.getBoundingClientRect();
+          const parentRect = startCell.parentElement.getBoundingClientRect();
+          const left = rectStart.left - parentRect.left + 2; // small inset
+          const right = rectEnd.right - parentRect.left - 2;
+          bar.style.left = left + 'px';
+          bar.style.width = Math.max(8, right - left) + 'px';
+        });
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = emp;
+        bar.appendChild(label);
+
+        // Context menu behavior
+        bar.addEventListener('contextmenu', (e)=>{
+          e.preventDefault(); hideCtx();
+          if(canOpenApprovalFor(emp)){
+            showCtx(e.clientX, e.clientY, emp, v);
+          }
+        });
+
+        // Append into the row container (use the grid wrapper as positioned ancestor)
+        grid.appendChild(bar);
+      }
+    });
+  }
+
+  // Initial render
+  render();
+  </script>
+</body>
+</html>
