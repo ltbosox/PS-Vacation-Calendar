@@ -4,11 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Team Vacation Calendar</title>
-  <meta name="description" content="Simple HTML/JS vacation calendar that reads Google Sheets data and shows requests by employee as colored bars." />
+  <meta name="description" content="HTML/JS vacation calendar that reads Google Sheets and shows requests in a traditional month grid." />
   <style>
     :root{
       --bg:#0f1220; --panel:#151a2b; --ink:#eaf0ff; --muted:#9aa5c1; --line:#28314d;
-      --accent:#6ea8ff; --red:#ff6e6e; --green:#5fd19a; --shadow:0 10px 30px rgba(0,0,0,.45);
+      --accent:#6ea8ff; --shadow:0 10px 30px rgba(0,0,0,.45);
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -35,49 +35,47 @@
     .chip .swatch{width:18px;height:12px;border-radius:3px;border:1px solid #0004;box-shadow:inset 0 0 0 1px #fff2}
     .chip .pending{background-image:repeating-linear-gradient(135deg, #ffffff90 0 6px, #ffffff10 6px 12px)}
 
-    /* Calendar grid */
-    .calendar{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:auto}
-    .grid{display:grid}
-    .grid .head, .grid .row{display:contents}
-    .name-cell{position:sticky;left:0;background:linear-gradient(90deg,var(--panel),#151a2b);z-index:2;border-right:1px solid var(--line)}
+    /* Month grid */
+    .calendar{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+    .dow-row{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--line)}
+    .dow-row div{padding:8px 10px;color:var(--muted);font-weight:600;text-transform:uppercase;font-size:11px}
 
-    .cell{border-top:1px solid var(--line);border-right:1px solid var(--line);min-height:34px;position:relative}
-    .dow{font-size:11px;color:var(--muted)}
-    .daynum{font-size:12px;color:var(--ink);font-weight:600}
-    .headcell{padding:6px 6px;text-align:center}
-    .namecell{padding:8px 10px;white-space:nowrap}
-
-    /* Bar styles */
-    .bar{
+    .monthgrid{display:grid;grid-template-columns:repeat(7,1fr)}
+    .daycell{
+      border-right:1px solid var(--line);
+      border-bottom:1px solid var(--line);
+      padding:6px;
       position:relative;
-      height:24px;
-      margin:4px 2px;
-      border-radius:7px;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      padding:0 8px;
-      color:#0b1022;
-      font-weight:700;
-      overflow:hidden;
-      cursor:default;
+      min-height:120px;
+      aspect-ratio:1/1;               /* squares */
+      background:#121735;
     }
-    .bar.pending::after{content:"";position:absolute;inset:0;background-image:repeating-linear-gradient(135deg, rgba(255,255,255,.65) 0 8px, rgba(255,255,255,0) 8px 16px)}
-    .bar .label{position:relative;z-index:1;text-shadow:0 1px 0 #ffffff55}
+    .daycell:nth-child(7n){border-right:none}
+    .daynum{position:absolute;top:6px;right:8px;font-weight:700;color:var(--muted)}
+    .outside{background:#0f132b}
 
-    /* Context menu */
+    .stack{display:flex;flex-direction:column;gap:4px;margin-top:18px;max-height:calc(100% - 22px);overflow:auto; padding-right:2px}
+
+    .bar{
+      height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+      padding:0 6px;color:#0b1022;font-weight:700;overflow:hidden;cursor:default;
+      white-space:nowrap;text-overflow:ellipsis; position:relative;
+    }
+    .bar.pending::after{
+      content:"";position:absolute;inset:0;
+      background-image:repeating-linear-gradient(135deg, rgba(255,255,255,.65) 0 8px, rgba(255,255,255,0) 8px 16px)
+    }
+
     .ctx{position:fixed;z-index:50;background:#0e142b;border:1px solid #32406c;border-radius:10px;min-width:220px;box-shadow:var(--shadow);display:none}
     .ctx a{display:block;padding:10px 12px;text-decoration:none}
     .ctx a:hover{background:#17224a}
 
-    /* Role pill */
     .role-pill{background:#1b2444;border:1px solid #28345d;color:#b9c4e8;padding:6px 10px;border-radius:999px;font-size:12px}
 
-    /* Narrow screens */
-    @media (max-width: 900px){
+    @media (max-width:900px){
       .app{padding:12px}
       .month-label{min-width:140px}
-      .namecell{min-width:150px}
+      .daycell{min-height:100px}
     }
   </style>
 </head>
@@ -103,318 +101,178 @@
     <div class="legend">
       <div class="chip"><span class="swatch" style="background:#6ea8ff"></span> Approved</div>
       <div class="chip"><span class="swatch pending" style="background:#6ea8ff"></span> Pending</div>
-      <div class="chip">Right‑click (approvers) → Open approvals sheet</div>
+      <div class="chip">Right-click (approvers) → Open approvals sheet</div>
     </div>
 
     <div id="calendar" class="calendar">
-      <div id="grid" class="grid"></div>
+      <div class="dow-row">
+        <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+      </div>
+      <div id="monthgrid" class="monthgrid"></div>
     </div>
   </div>
 
-  <!-- Floating + button to Google Form (edit the URL below) -->
+  <!-- Floating + button to Google Form -->
   <a id="requestLink" class="fab" href="#" target="_blank" rel="noopener">
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     Request time off
   </a>
 
-  <!-- Simple context menu for approvers -->
+  <!-- Context menu -->
   <div id="ctx" class="ctx"></div>
 
   <script>
-  /*********************
-   * 1) EDIT THESE
-   *********************/
-  // Link to your Google Form for creating requests
+  /* 1) EDIT THESE */
   const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeYlyGc4FXwIL2FwtAnEyJrCOlVN67uTYMiuSIQJSe4mEAh1g/viewform?usp=sharing&ouid=102321165535070845688";
-  // Link to your Google Sheets approvals spreadsheet (opens when approver right-clicks)
   const APPROVAL_SHEET_URL = "https://docs.google.com/forms/d/e/1FAIpQLSdgpcs0DWosivGb4h5wbCksgeRO8YLFQboz0NO0-krTIZQY7w/viewform?usp=sharing&ouid=102321165535070845688";
-  // PUBLIC CSV export link for the responses sheet (Publish to web → CSV on the specific tab)
-  // Your sheet has these columns: Timestamp, Employee Name, Employee Email, Manager Name, Manager Email,
-  // Department, Start Date, Return Date, Hours Taken, Type of Time Off, Notes, Request #, Overall Status
-  // We will use: Employee Name, Start Date, Return Date (we treat last day off = Return Date minus 1 day), Overall Status
+  // Use a Publish-to-Web CSV link or an export?format=csv link of the correct tab:
   const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1y2d5xHbDbg-iy8m6XJIqkRdUEr2gYLEDQdA6lMDX4mg/export?format=csv&gid=1860620676";
 
-  // Optional: list approvers by employee name for role filtering logic on right-click
-  const APPROVER1_NAMES = [ /* e.g., "Avery Jones" */ ];
-  const APPROVER2_NAMES = [ /* e.g., "Casey Patel" */ ];
+  // (Optional) list approvers by name
+  const APPROVER1_NAMES = [];
+  const APPROVER2_NAMES = [];
 
-  /*********************
-   * 2) ROLE HANDLING
-   * You can pass ?role=user, ?role=approver1, or ?role=approver2 in the page URL
-   * Example: https://yourname.github.io/vacation-cal/?role=approver2
-   * If none given, defaults to 'user'.
-   *********************/
+  /* 2) ROLE HANDLING */
   const urlRole = new URL(location.href).searchParams.get("role");
   const role = (urlRole === "approver2" || urlRole === "approver1") ? urlRole : "user";
-  const rolePill = document.getElementById('rolePill');
-  rolePill.textContent = `Role: ${role}`;
-
-  // Hook up links
+  document.getElementById('rolePill').textContent = `Role: ${role}`;
   document.getElementById('requestLink').href = FORM_URL;
 
-  /*********************
-   * 3) DATA TYPES
-   *********************/
-  /** @typedef {{ name:string, start:Date, end:Date, status:"Pending"|"Approved"|string }} Vacation */
-
-  /*********************
-   * 4) UTILITIES
-   *********************/
+  /* 3) UTILITIES */
   function fmtMonth(date){ return date.toLocaleString(undefined,{month:'long',year:'numeric'}); }
   function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
   function endOfMonth(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0); }
-  function daysInMonth(d){ return endOfMonth(d).getDate(); }
   function clampDate(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
   function parseDateLoose(s){
-    // Try YYYY-MM-DD first
-    const iso = /^\d{4}-\d{2}-\d{2}$/;
-    if(iso.test(s)) return new Date(s+"T00:00:00");
-    // Fallback to Date.parse
-    const t = Date.parse(s);
-    if(!isNaN(t)) return new Date(t);
-    return null;
+    const iso = /^\d{4}-\d{2}-\d{2}$/; if(iso.test(s)) return new Date(s+"T00:00:00");
+    const t = Date.parse(s); return isNaN(t) ? null : new Date(t);
   }
-  function nameToColor(name){
-    // Deterministic pastel-ish HSL from name hash
-    let h=0; for(let i=0;i<name.length;i++) h = (h*31 + name.charCodeAt(i))>>>0;
-    const hue = h % 360; const sat = 70; const light = 65;
-    return `hsl(${hue} ${sat}% ${light}%)`;
-  }
+  function nameToColor(name){ let h=0; for(let i=0;i<name.length;i++) h=(h*31+name.charCodeAt(i))>>>0; const hue=h%360; return `hsl(${hue} 70% 65%)`; }
 
-  /*********************
-   * 5) FETCH & PARSE SHEET (CSV)
-   *********************/
-  async function fetchCSV(url){
-    const res = await fetch(url, {cache:'no-store'});
-    if(!res.ok) throw new Error(`Failed to load sheet: ${res.status}`);
-    const text = await res.text();
-    return text;
-  }
+  /* 4) SHEET PARSE (CSV) */
+  async function fetchCSV(url){ const res = await fetch(url, {cache:'no-store'}); if(!res.ok) throw new Error(`Failed to load sheet: ${res.status}`); return res.text(); }
   function parseCSV(text){
-    // Parse CSV with basic quote handling (works with Google export)
-    function csvToRows(t){
-      const rows=[]; let row=[]; let cur=''; let q=false;
-      for(let i=0;i<t.length;i++){
-        const c=t[i], n=t[i+1];
-        if(c === '"'){
-          if(q && n === '"'){ cur += '"'; i++; } else { q = !q; }
-        } else if(c === ',' && !q){
-          row.push(cur); cur = '';
-        } else if((c === '\n' || c === '\r') && !q){
-          if(c === '\r' && n === '\n'){ i++; }
-          row.push(cur); rows.push(row); row=[]; cur='';
-        } else {
-          cur += c;
-        }
+    function csvToRows(t){ const rows=[]; let row=[],cur='',q=false;
+      for(let i=0;i<t.length;i++){ const c=t[i], n=t[i+1];
+        if(c=='"'){ if(q && n=='"'){ cur+='"'; i++; } else q=!q; }
+        else if(c==',' && !q){ row.push(cur); cur=''; }
+        else if((c=='\n'||c=='\r') && !q){ if(c=='\r'&&n=='\n') i++; row.push(cur); rows.push(row); row=[]; cur=''; }
+        else cur+=c;
       }
-      if(cur.length > 0 || row.length > 0){ row.push(cur); rows.push(row); }
-      return rows.filter(r => r.length && r.some(x => String(x).trim() !== ''));
+      if(cur.length>0 || row.length>0){ row.push(cur); rows.push(row); }
+      return rows.filter(r=>r.length && r.some(x=>String(x).trim()!==''));
     }
-  
     const rows = csvToRows(text);
-    const header = rows.shift().map(s => String(s).trim());
-    const find = (re) => header.findIndex(h => re.test(h));
-  
+    const header = rows.shift().map(s=>String(s).trim());
+    const find = (re)=> header.findIndex(h=>re.test(h));
     const idx = {
-      name:   find(/^employee\s*name$/i),
-      start:  find(/^start\s*date$/i),
-      // If an explicit End Date exists we'll use it; your sheet uses Return Date (first day back).
-      end:    find(/^end\s*date$/i),
-      ret:    find(/^return\s*date$/i),
-      status: find(/^(overall\s*status|status)$/i)
+      name:  find(/^employee\s*name$/i),
+      start: find(/^start\s*date$/i),
+      end:   find(/^end\s*date$/i),
+      ret:   find(/^return\s*date$/i),
+      status:find(/^(overall\s*status|status)$/i)
     };
-  
-    const out = [];
+    const out=[];
     for(const r of rows){
-      const nm = (r[idx.name]  ?? '').trim();
-      const sd = parseDateLoose((r[idx.start] ?? '').trim());
-  
-      let ed = null;
-      if(idx.end !== -1){
-        ed = parseDateLoose((r[idx.end] ?? '').trim());
-      } else if(idx.ret !== -1){
-        const ret = parseDateLoose((r[idx.ret] ?? '').trim());
-        if(ret){
-          // Return Date = first day back → last day off is Return Date - 1
-          ed = new Date(ret.getFullYear(), ret.getMonth(), ret.getDate() - 1);
-        }
+      const nm=(r[idx.name]||'').trim();
+      const sd=parseDateLoose((r[idx.start]||'').trim());
+      let ed=null;
+      if(idx.end!==-1){ ed=parseDateLoose((r[idx.end]||'').trim()); }
+      else if(idx.ret!==-1){
+        const ret=parseDateLoose((r[idx.ret]||'').trim());
+        if(ret) ed=new Date(ret.getFullYear(),ret.getMonth(),ret.getDate()-1); // Return = first day back
       }
-  
-      const rawStatus = (r[idx.status] ?? '').trim();
-      const st = /approved|complete/i.test(rawStatus) ? 'Approved' : 'Pending';
-  
-      if(!nm || !sd || !ed) continue;
-      out.push({ name: nm, start: clampDate(sd), end: clampDate(ed), status: st });
+      const raw=(r[idx.status]||'').trim();
+      const st=/approved|complete/i.test(raw)?'Approved':'Pending';
+      if(!nm||!sd||!ed) continue;
+      out.push({name:nm,start:clampDate(sd),end:clampDate(ed),status:st});
     }
     return out;
   }
 
-  /*********************
-   * 6) BUILD GRID
-   *********************/
-  const grid = document.getElementById('grid');
-  let currentMonth = startOfMonth(new Date());
-  updateMonthLabel();
-
-  document.getElementById('prevBtn').onclick = ()=>{ currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth()-1, 1); render(); };
-  document.getElementById('nextBtn').onclick = ()=>{ currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth()+1, 1); render(); };
-  document.getElementById('todayBtn').onclick = ()=>{ currentMonth = startOfMonth(new Date()); render(); };
-  document.getElementById('refreshBtn').onclick = ()=> render();
-
-  function updateMonthLabel(){ document.getElementById('monthLabel').textContent = fmtMonth(currentMonth); }
-
-  function findUniqueEmployees(vacs){
-    const set = new Set(vacs.map(v=>v.name));
-    return Array.from(set).sort((a,b)=>a.localeCompare(b));
-  }
-
-  function groupByEmployee(vacs){
-    const map = new Map();
-    for(const v of vacs){
-      if(!map.has(v.name)) map.set(v.name, []);
-      map.get(v.name).push(v);
-    }
-    return map;
-  }
-
-  function daysArray(month){
-    const total = daysInMonth(month);
-    const arr = [];
-    for(let d=1; d<=total; d++) arr.push(new Date(month.getFullYear(), month.getMonth(), d));
-    return arr;
-  }
-
-  function dateInRange(d,a,b){
-    const t = +clampDate(d), ta=+clampDate(a), tb=+clampDate(b);
-    return t>=ta && t<=tb;
-  }
-
-  function monthOverlap(rangeStart, rangeEnd, monthStart){
-    const monthEnd = endOfMonth(monthStart);
-    const start = rangeStart > monthStart ? rangeStart : monthStart;
-    const end = rangeEnd < monthEnd ? rangeEnd : monthEnd;
-    if(end < start) return null;
-    return {start, end};
-  }
-
-  // Context menu permissions per role
-  function canOpenApprovalFor(employeeName){
-    if(role === 'user') return false;
-    const isA1 = APPROVER1_NAMES.includes(employeeName);
-    const isA2 = APPROVER2_NAMES.includes(employeeName);
-    if(role === 'approver1'){
-      // Approver1 can open for plain users only (not approvers)
-      return !(isA1 || isA2);
-    }
-    // approver2 can open for everyone
-    return true;
-  }
-
-  const ctx = document.getElementById('ctx');
+  /* 5) CONTEXT MENU + ROLES */
+  const ctx=document.getElementById('ctx');
   function hideCtx(){ ctx.style.display='none'; }
-  function showCtx(x,y, emp, vac){
+  function showCtx(x,y, emp){
     ctx.innerHTML = `<a href="${APPROVAL_SHEET_URL}" target="_blank" rel="noopener">Open approvals sheet for ${emp}</a>`;
     ctx.style.left = x+"px"; ctx.style.top = y+"px"; ctx.style.display='block';
   }
   document.addEventListener('click', hideCtx);
-  document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') hideCtx(); });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape') hideCtx(); });
+  function canOpenApprovalFor(employeeName){
+    if(role==='user') return false;
+    const isA1 = APPROVER1_NAMES.includes(employeeName);
+    const isA2 = APPROVER2_NAMES.includes(employeeName);
+    if(role==='approver1') return !(isA1 || isA2);
+    return true; // approver2
+  }
+
+  /* 6) MONTH GRID RENDER */
+  const monthgrid=document.getElementById('monthgrid');
+  let currentMonth = startOfMonth(new Date());
+  document.getElementById('prevBtn').onclick=()=>{ currentMonth=new Date(currentMonth.getFullYear(),currentMonth.getMonth()-1,1); render(); };
+  document.getElementById('nextBtn').onclick=()=>{ currentMonth=new Date(currentMonth.getFullYear(),currentMonth.getMonth()+1,1); render(); };
+  document.getElementById('todayBtn').onclick=()=>{ currentMonth=startOfMonth(new Date()); render(); };
+  document.getElementById('refreshBtn').onclick=()=>render();
+  function updateMonthLabel(){ document.getElementById('monthLabel').textContent = fmtMonth(currentMonth); }
+
+  function daysMatrix(monthStart){
+    // Build a 6x7 grid starting on Sunday
+    const firstDow = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1).getDay(); // 0 Sun .. 6 Sat
+    const daysInThis = endOfMonth(monthStart).getDate();
+    const cells = [];
+    for(let i=0;i<firstDow;i++) cells.push({date:null, outside:true}); // leading blanks
+    for(let d=1; d<=daysInThis; d++) cells.push({date:new Date(monthStart.getFullYear(), monthStart.getMonth(), d), outside:false});
+    while(cells.length<42) cells.push({date:null, outside:true});      // trailing blanks to 6 rows
+    return cells;
+  }
+
+  function expandVacationsIntoDays(vacs){
+    const map = new Map(); // key: yyyy-mm-dd
+    const key = d => d.toISOString().slice(0,10);
+    for(const v of vacs){
+      for(let t=new Date(v.start); t<=v.end; t=new Date(t.getFullYear(),t.getMonth(),t.getDate()+1)){
+        const k=key(t); if(!map.has(k)) map.set(k,[]); map.get(k).push(v);
+      }
+    }
+    return map;
+  }
 
   async function render(){
     updateMonthLabel();
-  
-    // Load and parse data
-    let vacs = [];
-    try{
-      const csv = await fetchCSV(SHEET_CSV_URL);
-      vacs = parseCSV(csv);
-    }catch(err){
-      console.error(err);
-      grid.innerHTML = `<div style="padding:16px">⚠️ ${err.message}. Make sure your sheet is published to the web and the SHEET_CSV_URL is correct.</div>`;
-      return;
-    }
-  
-    // Layout: 1 name column + one column per day
-    const days = daysArray(currentMonth);
-    grid.style.gridTemplateColumns = `200px repeat(${days.length}, 1fr)`;
-  
-    // Build header row (weekday letter + day number)
-    const headParts = [];
-    headParts.push(`<div class="head name-cell headcell" style="grid-column:1">Employee</div>`);
-    days.forEach((d, i)=>{
-      const dow = d.toLocaleDateString(undefined,{weekday:'narrow'}); // M T W …
-      headParts.push(
-        `<div class="head cell headcell" style="grid-column:${i+2}">
-           <div class="dow">${dow}</div>
-           <div class="daynum">${d.getDate()}</div>
-         </div>`);
-    });
-  
-    // Rows per employee
-    const byEmp = groupByEmployee(vacs);
-    const employees = findUniqueEmployees(vacs);
-  
-    const rowParts = [];
-    for(const emp of employees){
-      // Left sticky name cell
-      rowParts.push(`<div class="row name-cell namecell">${emp}</div>`);
-      // Day cells
-      for(let i=0;i<days.length;i++){
-        rowParts.push(`<div class="row cell"></div>`);
+
+    let vacs=[];
+    try{ const csv=await fetchCSV(SHEET_CSV_URL); vacs=parseCSV(csv); }
+    catch(err){ monthgrid.innerHTML = `<div style="padding:16px">⚠️ ${err.message}</div>`; return; }
+
+    const dayMap = expandVacationsIntoDays(vacs);
+    const cells = daysMatrix(currentMonth);
+
+    monthgrid.innerHTML = '';
+    for(const cell of cells){
+      const el = document.createElement('div');
+      el.className = 'daycell' + (cell.outside ? ' outside' : '');
+      const num = document.createElement('div'); num.className='daynum'; num.textContent = cell.date ? cell.date.getDate() : '';
+      el.appendChild(num);
+      const stack = document.createElement('div'); stack.className='stack'; el.appendChild(stack);
+
+      if(cell.date){
+        const k = cell.date.toISOString().slice(0,10);
+        const items = (dayMap.get(k)||[]).slice().sort((a,b)=> a.name.localeCompare(b.name));
+        for(const v of items){
+          const bar = document.createElement('div');
+          bar.className = 'bar' + (v.status==='Pending' ? ' pending' : '');
+          bar.style.background = nameToColor(v.name);
+          bar.textContent = v.name;
+          bar.title = `${v.name} — ${v.start.toLocaleDateString()} to ${v.end.toLocaleDateString()} (${v.status})`;
+          bar.addEventListener('contextmenu', (e)=>{ e.preventDefault(); hideCtx(); if(canOpenApprovalFor(v.name)) showCtx(e.clientX,e.clientY,v.name); });
+          stack.appendChild(bar);
+        }
       }
+      monthgrid.appendChild(el);
     }
-  
-    grid.innerHTML = headParts.join('') + rowParts.join('');
-  
-    // Render bars using CSS grid placement (no pixel math)
-    employees.forEach((emp, rowIdx)=>{
-      const empColor = nameToColor(emp);
-      const items = (byEmp.get(emp)||[]);
-      for(const v of items){
-        const overlap = monthOverlap(v.start, v.end, currentMonth);
-        if(!overlap) continue;
-  
-        const startCol = overlap.start.getDate();
-        const endCol   = overlap.end.getDate();
-  
-        // grid column lines: start at first day col = 2, end line is exclusive
-        const colStartIndex = 2 + (startCol - 1);
-        const colEndLine    = 2 + endCol; // +1 from the end cell’s column
-  
-        // grid row lines: header occupies row 1; first employee row starts at row 2
-        const rowStartLine  = 2 + rowIdx;
-        const rowEndLine    = rowStartLine + 1;
-  
-        const bar = document.createElement('div');
-        bar.className = 'bar' + (v.status === 'Pending' ? ' pending' : '');
-        bar.style.background = empColor;
-  
-        // Place bar across columns and in the correct row
-        bar.style.gridColumn = `${colStartIndex} / ${colEndLine}`;
-        bar.style.gridRow    = `${rowStartLine} / ${rowEndLine}`;
-  
-        // Tooltip with exact dates and status
-        bar.title = `${emp} — ${overlap.start.toLocaleDateString()} to ${overlap.end.toLocaleDateString()} (${v.status})`;
-  
-        // Center label
-        const label = document.createElement('span');
-        label.className = 'label';
-        label.textContent = emp;
-        bar.appendChild(label);
-  
-        // Right-click behavior (roles)
-        bar.addEventListener('contextmenu', (e)=>{
-          e.preventDefault(); hideCtx();
-          if(canOpenApprovalFor(emp)){
-            showCtx(e.clientX, e.clientY, emp, v);
-          }
-        });
-  
-        grid.appendChild(bar);
-      }
-    });
   }
 
-  // Initial render
   render();
   </script>
 </body>
