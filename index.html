@@ -46,7 +46,7 @@
       border-bottom:1px solid var(--line);
       padding:6px;
       position:relative;
-      min-height:120px;
+      min-height:100px;              /* reduced height */
       aspect-ratio:1/1;               /* squares */
       background:#121735;
     }
@@ -75,7 +75,7 @@
     @media (max-width:900px){
       .app{padding:12px}
       .month-label{min-width:140px}
-      .daycell{min-height:100px}
+      .daycell{min-height:80px} /* also reduce on mobile */
     }
   </style>
 </head>
